@@ -1,0 +1,12 @@
+{
+  "name": "codeconclave",
+  "version": "1.3.0",
+  "description": "CodeConClave AI in your terminal: chat, make and change files (you approve every change), and a coding agent that plans first and can rewind.",
+  "bin": { "codeconclave": "codeconclave.mjs" },
+  "files": ["codeconclave.mjs", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "homepage": "https://codeconclave-ww5x.onrender.com/cli",
+  "repository": { "type": "git", "url": "git+https://github.com/sivakumarmedidi64-dotcom/codeconclave-cli.git" },
+  "keywords": ["ai", "cli", "coding-agent", "ai-agent", "terminal", "developer-tools", "codeconclave"]
+}
