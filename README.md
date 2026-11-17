@@ -23,13 +23,15 @@ Or straight from the CodeConClave site:
 npm install -g https://codeconclave-ww5x.onrender.com/cli.tgz
 ```
 
-## Sign in
+## Sign in (free)
 
 ```bash
 codeconclave login
 ```
 
-Paste your API key from **CodeConClave → Settings → API keys**. API keys are prepaid: add credit to your API wallet first. Prices are on [the developers page](https://codeconclave-ww5x.onrender.com/developers).
+A page opens in your browser. Sign in to CodeConClave (free, with Google or GitHub), check that the code matches your terminal, and press **Connect**. The CLI then uses your normal CodeConClave messages, free like the web app. No API key is needed.
+
+Already have a prepaid API key? Use `codeconclave login --key` and paste it instead. `codeconclave logout --everywhere` signs out every terminal at once.
 
 ## Use it
 
@@ -56,7 +58,7 @@ Put rules for the agent in `CODECONCLAVE.md` (or `AGENTS.md`) in your folder.
 
 - **Files:** nothing changes until you see the change and say yes. `--yes` skips the question per file, but commands still ask.
 - **Undo:** every change from `do` can be rewound.
-- **Your key:** it stays on your computer, and it is sent only to CodeConClave.
+- **Your sign-in:** it stays on your computer and is sent only to CodeConClave. Only press Connect for a code from your own terminal.
 
 ## More
 

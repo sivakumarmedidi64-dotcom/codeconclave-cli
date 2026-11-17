@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // CodeConClave CLI - use CodeConClave AI from your terminal: chat, make a file, change a file (you see the change and say yes first).
-// One file, nothing to install. Needs Node 18 or newer. Your API key comes from CodeConClave -> Settings -> API keys.
+// One file, nothing to install. Needs Node 18 or newer. Sign in with your CodeConClave account (free messages, like the web app), or use an API key.
 //
-//   node codeconclave.mjs login                       save your API key on this computer
+//   node codeconclave.mjs login                       sign in with your account (OK a code in the browser) · login --key: paste an API key
 //   node codeconclave.mjs                             chat (type /help inside)
 //   node codeconclave.mjs "your question"             one answer
 //   node codeconclave.mjs make snake.html "a snake game with a score"
@@ -24,12 +24,12 @@
 //   plan "goal" · run "goal" [--yes] · runs · run show|watch|cancel|pause|resume|retry <id> · approve <id> <code> · deny <id>
 //   undo <id> · report <id> [file.pdf] · trace <id> · inbox · activity · actions search "words" · js file.js | js "code" · mcp
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, basename, dirname, resolve, sep } from 'node:path';
 import readline from 'node:readline';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const BASE = (process.env.CODECONCLAVE_URL || 'https://codeconclave-ww5x.onrender.com').replace(/\/+$/, '');
 const CONF = join(homedir(), '.codeconclave.json');
 const tty = process.stdout.isTTY;
@@ -55,13 +55,13 @@ function spinner(text) {
 
 async function call(messages, { code = false, max } = {}) {
   const key = keyOf();
-  if (!key) throw new Error(`No API key yet. Make one in CodeConClave -> Settings -> API keys, then run:\n  node ${basename(process.argv[1])} login`);
+  if (!key) throw new Error(NOT_SIGNED_IN());
   const stop = spinner(code ? 'Writing the code' : 'Thinking');
   try {
     const r = await fetch(`${BASE}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}`, 'user-agent': `codeconclave-cli/${VERSION}` },
       body: JSON.stringify({ model: code ? 'codeconclave-code' : 'codeconclave-1', messages, ...(max ? { max_tokens: max } : {}) }), signal: AbortSignal.timeout(300000) });
     const d = await r.json().catch(() => ({}));
-    if (r.status === 401) throw new Error('Your API key is not valid. Make a new one in Settings -> API keys and run login again.');
+    if (r.status === 401) throw new Error(NOT_VALID);
     if (!r.ok) throw new Error(d?.error?.message || d?.error || `CodeConClave answered ${r.status}.`);
     return String(d?.choices?.[0]?.message?.content || '').trim();
   } finally { stop(); }
@@ -283,13 +283,45 @@ async function chat() {
   rl.close();
 }
 
+// ---- sign in with the CodeConClave account: a short code OK'd in the browser, then the normal messages of that account ----
+const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+function openBrowser(url) {
+  try {
+    const [c, a] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    spawn(c, a, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+  } catch { /* the link is printed anyway */ }
+}
+async function signIn() {
+  const s = await fetch(`${BASE}/api/cli/login/start`, { method: 'POST', headers: { 'user-agent': `codeconclave-cli/${VERSION}` } }).then((r) => r.json()).catch(() => ({}));
+  if (!s.device) throw new Error(s.error || 'Could not reach CodeConClave to sign in. Check the internet and try again.');
+  console.log(`\nOpen this page, check the code and press Connect:\n  ${bold(s.url)}\n\nYour code: ${yellow(bold(s.code))}\n`);
+  openBrowser(s.url);
+  const stop = spinner('Waiting for you to press Connect in the browser');
+  let done = null;
+  try {
+    for (const until = Date.now() + (s.expiresIn || 600) * 1000; Date.now() < until && !done;) {
+      await wait((s.interval || 3) * 1000);
+      const r = await fetch(`${BASE}/api/cli/login/poll`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: s.device }) }).catch(() => null);
+      if (!r) continue;   // a network blip: ask again
+      const d = await r.json().catch(() => ({}));
+      if (d.token) done = d;
+      else if (r.status === 404) throw new Error(d.error || 'The sign-in ended. Run login again.');
+    }
+  } finally { stop(); }
+  if (!done) throw new Error('The sign-in took too long. Run login again.');
+  writeFileSync(CONF, JSON.stringify({ key: done.token, account: done.email || done.name || '' }), { mode: 0o600 });
+  console.log(green(`✓ Signed in as ${done.email || done.name}.`) + dim(` It uses your normal CodeConClave messages. Kept in ${CONF} on this computer only.`));
+}
+const NOT_SIGNED_IN = () => `Not signed in yet. Run:\n  node ${basename(process.argv[1])} login\n(it signs in with your CodeConClave account and uses your normal messages)`;
+const NOT_VALID = 'Your sign-in or API key is not valid any more. Run login again.';
+
 // ---- the agent protocol: the same JSON API the IDE extension and other tools use (/v1/tasks, /v1/actions/<id>/run, ...) ----
 async function api(method, path, body) {
   const key = keyOf();
-  if (!key) throw new Error(`No API key yet. Make one in CodeConClave -> Settings -> API keys, then run:\n  node ${basename(process.argv[1])} login`);
+  if (!key) throw new Error(NOT_SIGNED_IN());
   const r = await fetch(`${BASE}${path}`, { method, headers: { 'content-type': 'application/json', authorization: `Bearer ${key}`, 'user-agent': `codeconclave-cli/${VERSION}` }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(300000) });
   const d = await r.json().catch(() => ({}));
-  if (r.status === 401) throw new Error('Your API key is not valid. Make a new one in Settings -> API keys and run login again.');
+  if (r.status === 401) throw new Error(NOT_VALID);
   if (!r.ok) throw new Error(d?.error?.message || d?.error || `CodeConClave answered ${r.status}.`);
   return d;
 }
@@ -429,13 +461,22 @@ async function main() {
   if (cmd === '--version' || cmd === '-v') return console.log(VERSION);
   if (cmd === '--help' || cmd === '-h' || cmd === 'help') return console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 25).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
   if (AGENT_CMDS.has(cmd)) return agent(cmd, rest);
-  if (cmd === 'login') {
+  if (cmd === 'login' && (rest[0] === '--key' || rest[0] === 'key')) {
     const k = (await ask('Paste your API key (from Settings -> API keys): ')).trim();
     if (!/^(SHA-[\w-]{30,}|cck_\w+_[\w-]{20,})$/.test(k)) throw new Error('That does not look like a CodeConClave API key (it starts with SHA-).');
     writeFileSync(CONF, JSON.stringify({ key: k }), { mode: 0o600 });
     return console.log(green('✓ Saved.') + dim(` It is kept in ${CONF} on this computer only.`));
   }
-  if (cmd === 'logout') { writeFileSync(CONF, '{}', { mode: 0o600 }); return console.log('Signed out on this computer.'); }
+  if (cmd === 'login') return signIn();
+  if (cmd === 'logout') {
+    // --everywhere: every terminal signed in with this account is signed out (an API key is not touched: delete it in Settings)
+    const k = keyOf();
+    if (rest[0] === '--everywhere' && /^cs1\./.test(k)) {
+      const r = await fetch(`${BASE}/api/cli/logout`, { method: 'POST', headers: { authorization: `Bearer ${k}` } }).catch(() => null);
+      console.log(r?.ok ? 'Every terminal signed in with your account is signed out.' : dim('Could not reach CodeConClave to sign out the other terminals.'));
+    }
+    writeFileSync(CONF, '{}', { mode: 0o600 }); return console.log('Signed out on this computer.');
+  }
   if (cmd === 'do') return doTask(rest.filter((x) => x !== '--yes').join(' '), { auto: rest.includes('--yes') });
   if (cmd === 'rewind') return rewind(rest[0]);
   if (cmd === 'commands') { const l = savedCommands(); return console.log(l.length ? l.join('\n') : 'No saved commands. Add .codeconclave/commands/<name>.md in this folder (use $ARGUMENTS where your words go).'); }
